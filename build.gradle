@@ -1,0 +1,205 @@
+plugins {
+    id 'org.jetbrains.kotlin.multiplatform' 
+}
+
+repositories {
+    jcenter()
+}
+
+ext.webpackMode = 'development'
+ext.siteSetting = [
+    targetDirectory: project.name
+]
+
+
+
+kotlin {
+    js {
+        browser {
+            webpackTask {
+                output.libraryTarget = 'umd'
+            }
+        }
+    }
+    jvm()
+    sourceSets {
+        jvmMain {
+            dependencies {
+                implementation 'com.google.code.gson:gson:2.8.7'
+                implementation 'com.google.guava:guava:23.0'
+                implementation 'gnu.getopt:java-getopt:1.0.13'
+                implementation 'org.apache.commons:commons-csv:1.9.0'
+            }
+        }
+        jsMain {
+            dependencies {
+                implementation kotlin('stdlib-js')
+            }
+        }
+    }
+}
+
+
+/**
+ * set japanese address conversions
+ */
+def setupJpAddressConv(
+    def execSpec) {
+    def srcCsv = file("${projectDir}/address-jp/address.csv")
+
+    def runDepFiles = 
+        kotlin.targets.jvm.compilations.main.runtimeDependencyFiles
+
+    execSpec.classpath runDepFiles
+    execSpec.classpath jvmJar.archiveFile.get()
+
+    execSpec.mainClass = 'net.oc_soft.App'
+
+    execSpec.args '-f'
+    execSpec.args srcCsv
+
+    execSpec.inputs.file srcCsv
+
+}
+
+task runJpAddressConvZip(type: org.gradle.api.tasks.JavaExec) {
+
+    def destDir = file(
+        "${buildDir}/${siteSetting['targetDirectory']}/resource")
+
+    destDir.mkdirs()
+    
+    def outputFile = file("${destDir}/postal-number.json")
+    outputFile.createNewFile()
+    outputs.file outputFile 
+
+    def os = new ByteArrayOutputStream()
+    
+    setupJpAddressConv(it)
+    args '-c', 'ZIP'
+
+    standardOutput = os
+
+    doLast {
+        outputFile.text = os.toString()
+    }
+}
+
+task runJpAddressConvPrefCity(type: org.gradle.api.tasks.JavaExec) {
+
+    def destDir = file(
+        "${buildDir}/${siteSetting['targetDirectory']}/resource")
+
+    destDir.mkdirs()
+    
+    def outputFile = file("${destDir}/pref-city.json")
+    outputFile.createNewFile()
+    outputs.file outputFile 
+
+    def os = new ByteArrayOutputStream()
+    
+    setupJpAddressConv(it)
+    args '-c', 'PREF_CITY'
+
+    standardOutput = os
+
+    doLast {
+        outputFile.text = os.toString()
+    }
+}
+
+
+/**
+ * get webpack task name
+ */
+def getWebpackTaskName() {
+    return "jsBrowser${ext.webpackMode.capitalize()}Webpack"
+}
+
+
+/**
+ * get distribution directory
+ */
+def getDistributionDir() {
+    def result = null
+    kotlin {
+        js {
+            browser {
+                distribution {
+                    result = directory
+                }
+            }
+        }
+    }
+    return result
+}
+
+
+/**
+ * copy javascript into site image directory
+ */
+task copyJsIntoSiteImage {
+    def destDir = "${buildDir}/${siteSetting['targetDirectory']}/js"
+    def srcDir = distributionDir    
+
+    doLast {
+        copy {
+            from srcDir
+            into destDir
+            include '**/*.js'
+            include '**/*.map'
+        }
+    }
+}
+
+
+
+copyJsIntoSiteImage.dependsOn tasks.getByPath(webpackTaskName)
+
+/**
+ * copy php files into site image directory
+ */
+task copyPhpIntoSiteImage {
+   
+    def destDir = "${buildDir}/${siteSetting['targetDirectory']}"
+    def srcDir = file('src/php')
+
+
+    copy {
+        from srcDir
+        into destDir
+        include '**/*.php'
+    }
+}
+
+task archivePlugin(type: org.gradle.api.tasks.bundling.Zip) {
+    description = 'archive plugin'
+    def inputDir = "${buildDir}/${project.name}"
+    def outputDir = new File(buildDir, "wordpress/plugins")
+
+    archiveBaseName = project.name
+    destinationDirectory = outputDir
+    into project.name
+    from inputDir
+}
+
+/**
+ * build site image
+ */
+task buildSiteImage {
+
+}
+
+buildSiteImage.dependsOn build
+buildSiteImage.dependsOn runJpAddressConvZip
+buildSiteImage.dependsOn runJpAddressConvPrefCity
+buildSiteImage.dependsOn copyPhpIntoSiteImage
+buildSiteImage.dependsOn copyJsIntoSiteImage
+
+archivePlugin.dependsOn buildSiteImage
+
+task archiveModules {
+    description = 'create plugin module'
+    dependsOn archivePlugin
+}
+// vi: se ts=4 sw=4 et:
